@@ -1,0 +1,61 @@
+async readPool() {
+		let self = this;
+		let time = +new Date();
+		try{
+			let now=Date.now();
+			let res = await self.rpc({"jsonrpc":"2.0","method":"txpool_content","params":[],"id":1});
+			if(res) {
+				let txs = [];
+				let tempTxs = {};
+				let bInit = self.memPool ===null;
+				for(let addr in res.pending) {
+					for(let k in res.pending[addr]) {
+						let hash=res.pending[addr][k].hash;
+						if ( bInit || self.memPool[hash] === undefined ) {
+							txs.push(res.pending[addr][k]);
+						}
+						tempTxs[hash]=1;
+					}
+				}
+				for(let addr in res.queued) {
+					for(let k in res.queued[addr]) {
+						let hash=res.queued[addr][k].hash;
+						if ( bInit || self.memPool[hash] === undefined ) {
+							txs.push(res.queued[addr][k]);
+						}
+						tempTxs[hash]=1;
+					}
+				}
+				self.memPool=tempTxs;
+				await G.confirm_check(CHAIN, tempTxs);
+				let total = Object.keys(tempTxs).length;
+				let len=txs.length;
+				let start=0,end=0,max=500;
+				while(end<len) {
+					time=+new Date();
+					end=start+max;
+					if(end>len) end=len;
+					let rs=txs.slice(start,end);
+					let rows=await self.checkTxs(txs,0);
+					if(rows) {
+						for(let tx of rows) {
+							await G.tx_add(CHAIN, tx.token, tx.to, tx.hash, 0, tx.value, 0, 0, now);
+							await G.tx_add(CHAIN, tx.token, tx.from, tx.hash, 0, tx.value, 1, 0, now);
+						}
+					}
+					if (bInit) {
+						setBlock( CHAIN, { height:0, data: [Math.round(end/total*100)+'%',total], spent: +new Date()-time } )
+					}else{
+						setBlock( CHAIN, { height:0, data: [rs.length,total], spent: +new Date()-time } )
+					}
+					start=end;
+					if(end!=len) {
+						await new Promise(resolve=>setTimeout(resolve,100));
+					}
+				}
+			}
+		}catch(err){
+			setErr(CHAIN, err.message, err.stack)
+		}
+		setTimeout(()=>self.readPool(),1000);
+	} 
